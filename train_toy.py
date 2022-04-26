@@ -17,8 +17,9 @@ import lib.layers as layers
 import lib.toy_data as toy_data
 import lib.utils as utils
 from lib.visualize_flow import visualize_transform
-
 from lib.kde import GaussianKernel, KernelDensityEstimator
+
+import wandb
 
 ACTIVATION_FNS = {
     'relu': torch.nn.ReLU,
@@ -75,7 +76,7 @@ parser.add_argument('--use_wandb', type=str, default='False')
 parser.add_argument('--norm_hyp', type=float, default=0.0001)
 parser.add_argument('--toy_exp_type', type=str, default='default') # base
 parser.add_argument('--sampling_num', type=int, default=256) # base
-parser.add_argument('--kde_bandwidth', type=float, default=0.4) # base
+parser.add_argument('--kde_bandwidth', type=float, default=0.6) # base
 
 args = parser.parse_args()
 
@@ -105,6 +106,16 @@ mean = torch.zeros(2).to(args.device) # mean=0
 cov = torch.eye(2).to(args.device) # covariance=1
 priorMVG_Z = torch.distributions.multivariate_normal.MultivariateNormal(loc=mean, covariance_matrix=cov) # MVG ~ N(0,I)
 
+if args.use_wandb=='True':
+    if args.toy_exp_type == 'default':
+        args.norm_hyp = 0
+        
+    name = args.toy_exp_type + '_' + args.data + str(args.norm_hyp)
+    args.experiment_name = name
+
+    wandb.init(project='Resflow_toy', name=name)
+    wandb.config.update(args)
+        
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -282,6 +293,7 @@ if __name__ == '__main__':
         optimizer.zero_grad()
         beta = min(1, itr / args.annealing_iters) if args.annealing_iters > 0 else 1.
 
+
         ''' 1. Sampling z from MVG and keep log_p_z '''
         z = priorMVG_Z.sample((args.batch_size,)).to(args.device) # [batchsize, 2]
         log_p_z = priorMVG_Z.log_prob(z) # [batchsize]
@@ -289,24 +301,11 @@ if __name__ == '__main__':
 
         ''' 2. Calculate f(x; theta) '''
         sampled_x, delta_log_p_x = model.inverse(z, zero)
-        log_p_x = log_p_z + delta_log_p_x # f(x) = log p(z) - log |det J| = log p(x)
+        log_p_x = log_p_z + delta_log_p_x.squeeze(-1) # f(x) = log p(z) - log |det J| = log p(x)
 
         ''' 3. Calculate g(x; KDE) '''
         kde_q = kernel_estimator(sampled_x) # Estimate denstiy of sampled data in KDE
-    # # load data
-    # x = toy_data.inf_train_gen(args, args.data, batch_size=batch_size)
-    # x = torch.from_numpy(x).type(torch.float32).to(device)
-    # zero = torch.zeros(x.shape[0], 1).to(x)
 
-    # # transform to z
-    # z, delta_logp = model(x, zero) # delta_logp = logpx - logdetgrad
-
-    # # compute log p(z)
-    # logpz = standard_normal_logprob(z).sum(1, keepdim=True)
-
-    # logpx = logpz - beta * delta_logp  
-    # loss = -torch.mean(logpx)
-    # return loss, torch.mean(logpz), torch.mean(-delta_logp)
         losses = {}
         ''' 4. Calculate Objective 1 = -log p(x): losses['nll'] '''
         losses['nll'], losses['logpz'], losses['delta_logp'] = compute_loss(args, model, beta=beta)
@@ -316,7 +315,6 @@ if __name__ == '__main__':
         # KL(Q||P) = kl_loss(P.log, Q)
         # f(x) = log_p_x -> log density
         # g(x) = kde_q -> density
-        
         losses['kl_mean_gf'] = kl_loss_mean(log_p_x, kde_q)
         losses['kl_mean_g_minusf'] = kl_loss_mean(-1 * log_p_x, kde_q)       
         
@@ -338,41 +336,39 @@ if __name__ == '__main__':
 
         if args.toy_exp_type == 'default':
             losses['new_objective'] = losses['nll']
-            regulaizer = 0
+            regularizer = 0
         elif args.toy_exp_type == 'KL_gf':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_mean_gf']
-            regulaizer = args.norm_hyp * losses['kl_mean_gf']
+            regularizer = args.norm_hyp * losses['kl_mean_gf'].item()
         elif args.toy_exp_type == 'KL_g-f':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_mean_g_minusf']
-            regulaizer = args.norm_hyp * losses['kl_mean_g_minusf']
+            regularizer = args.norm_hyp * losses['kl_mean_g_minusf'].item()
         elif args.toy_exp_type == 'KLeleNorm_gf':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_gf_norm']
-            regulaizer = args.norm_hyp * losses['kl_gf_norm']
+            regularizer = args.norm_hyp * losses['kl_gf_norm'].item()
         elif args.toy_exp_type == 'KLeleNorm_g-f':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_g_minusf_norm']
-            regulaizer = args.norm_hyp * losses['kl_g_minusf_norm']
+            regularizer = args.norm_hyp * losses['kl_g_minusf_norm'].item()
         elif args.toy_exp_type == 'qp_ratio':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['qp_ratio']
-            regulaizer = args.norm_hyp * losses['qp_ratio']
+            regularizer = args.norm_hyp * losses['qp_ratio'].item()
         elif args.toy_exp_type == 'pq_ratio':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['pq_ratio']
-            regulaizer = args.norm_hyp * losses['pq_ratio']
+            regularizer = args.norm_hyp * losses['pq_ratio'].item()
         elif args.toy_exp_type == 'jsd':   
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['jsd']
-            regulaizer = args.norm_hyp * losses['jsd']
+            regularizer = args.norm_hyp * losses['jsd'].item()
         else:
             print("Not Implemented")
     
+        losses['new_objective'].backward()
 
         loss_meter.update(losses['nll'].item())
         logpz_meter.update(losses['logpz'].item())
         delta_logp_meter.update(losses['delta_logp'].item())
         new_loss_meter.update(losses['new_objective'].item())
-        regularizer_meter.update(regulaizer)
-        # loss.backward()
+        regularizer_meter.update(regularizer)
         
-        losses['new_objective'].backward()
-
         if args.learn_p and itr > args.annealing_iters: compute_p_grads(model)
         optimizer.step()
         update_lipschitz(model, args.n_lipschitz_iters)
@@ -380,12 +376,22 @@ if __name__ == '__main__':
         time_meter.update(time.time() - end)
 
         logger.info(
-            'Iter {:04d} | Time {:.4f}({:.4f}) | Loss {:.6f}({:.6f})'
-            ' | Logp(z) {:.6f}({:.6f}) | DeltaLogp {:.6f}({:.6f})'.format(
-                itr, time_meter.val, time_meter.avg, loss_meter.val, loss_meter.avg, logpz_meter.val, logpz_meter.avg,
-                delta_logp_meter.val, delta_logp_meter.avg
+            'Iter {:04d} | Time {:.4f}({:.4f}) | NLL {:.6f}({:.6f}) | NewLoss {:.6f}({:.6f})'
+            ' | Logp(z) {:.6f}({:.6f}) | DeltaLogp {:.6f}({:.6f}) | Regularizer {:.6f}({:.6f}) |'.format(
+                itr, time_meter.val, time_meter.avg, loss_meter.val, loss_meter.avg, new_loss_meter.val, new_loss_meter.avg, logpz_meter.val, logpz_meter.avg,
+                delta_logp_meter.val, delta_logp_meter.avg, regularizer_meter.val, regularizer_meter.avg
             )
         )
+
+
+        if args.use_wandb=='True':
+            results = {
+                "kde_q": kde_q.mean().item(), "log_p_x": log_p_x.mean().item(), "density_x": density_x.mean().item(),
+                "norm_density": norm_density,
+                # "norm_log_density": norm_log_density,
+            }
+            results.update(losses)
+            wandb.log(results)
 
         if itr % args.val_freq == 0 or itr == args.niters:
             update_lipschitz(model, 200)
