@@ -16,7 +16,7 @@ class CouplingBlock(nn.Module):
         x_b = (y_b - t(y_a)) * exp(-s(y_a))
     """
 
-    def __init__(self, dim, nnet, swap=False):
+    def __init__(self, dim, swap=False):
         """
         Args:
             s (nn.Module)
@@ -25,13 +25,35 @@ class CouplingBlock(nn.Module):
         super(CouplingBlock, self).__init__()
         assert (dim % 2 == 0)
         self.d = dim // 2
-        self.nnet = nnet
+        # self.nnet = nnet
         self.swap = swap
+        
+        self.num_layers = 1
 
+        layers_scale = []
+        layers_scale += [nn.Linear(in_dim, hidden_dim)]
+        for i in range(self.num_layers):
+            layers_scale += [nn.Tanh(), nn.Linear(hidden_dim, hidden_dim)]
+
+        layers_scale += [nn.Tanh(), nn.Linear(hidden_dim, out_dim)]
+        self.scale_net = nn.Sequential(*layers_scale)
+
+        layers_shift = []
+        layers_shift += [nn.Linear(in_dim, hidden_dim)]
+        for i in range(self.num_layers):
+            layers_shift += [nn.ReLU(), nn.Linear(hidden_dim, hidden_dim)]
+
+        layers_shift += [nn.ReLU(), nn.Linear(hidden_dim, out_dim)]
+        self.shift_net = nn.Sequential(*layers_shift)
+
+        # RealNVP is not implemented yet....
+        # ToDo: Flip in_out dims
     def func_s_t(self, x):
-        f = self.nnet(x)
-        s = f[:, :self.d]
-        t = f[:, self.d:]
+        # f = self.network(x)
+        # s = f[:, :self.d]
+        # t = f[:, self.d:]
+        s = self.scale_net(x)
+        t = self.shift_net(x) 
         return s, t
 
     def forward(self, x, logpx=None):

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import argparse
 import os
 import time
+import datetime
 import math
 import numpy as np
 
@@ -16,6 +17,8 @@ import lib.layers as layers
 import lib.toy_data as toy_data
 import lib.utils as utils
 from lib.visualize_flow import visualize_transform
+
+from lib.kde import GaussianKernel, KernelDensityEstimator
 
 ACTIVATION_FNS = {
     'relu': torch.nn.ReLU,
@@ -31,7 +34,7 @@ ACTIVATION_FNS = {
 parser = argparse.ArgumentParser()
 parser.add_argument(
     '--data', choices=['swissroll', '8gaussians', 'pinwheel', 'circles', 'moons', '2spirals', 'checkerboard', 'rings'],
-    type=str, default='pinwheel'
+    type=str, default='8gaussians'
 )
 parser.add_argument('--arch', choices=['iresnet', 'realnvp'], default='iresnet')
 parser.add_argument('--coeff', type=float, default=0.9)
@@ -60,25 +63,47 @@ parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--weight-decay', type=float, default=1e-5)
 parser.add_argument('--annealing-iters', type=int, default=0)
 
-parser.add_argument('--save', type=str, default='experiments/iresnet_toy')
+parser.add_argument('--save', type=str, default='experiments/')
 parser.add_argument('--viz_freq', type=int, default=100)
 parser.add_argument('--val_freq', type=int, default=100)
 parser.add_argument('--log_freq', type=int, default=10)
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--seed', type=int, default=123)
+
+
+parser.add_argument('--use_wandb', type=str, default='False')
+parser.add_argument('--norm_hyp', type=float, default=0.0001)
+parser.add_argument('--toy_exp_type', type=str, default='default') # base
+parser.add_argument('--sampling_num', type=int, default=256) # base
+parser.add_argument('--kde_bandwidth', type=float, default=0.4) # base
+
 args = parser.parse_args()
 
-# logger
-utils.makedirs(args.save)
-logger = utils.get_logger(logpath=os.path.join(args.save, 'logs'), filepath=os.path.abspath(__file__))
-logger.info(args)
-
 device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
+args.device = device
 
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if device.type == 'cuda':
     torch.cuda.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+# intialize snapshots directory for saving models and results
+args.model_signature = str(datetime.datetime.now())[0:19].replace(' ', '_').replace(':', '_').replace('-', '_')
+args.name = args.arch + '_' + '_' + args.data + '/' + args.toy_exp_type + '_' + str(args.nblocks) + 'blocks' + '_'+ str(args.norm_hyp)
+
+lr_schedule = f'_lr{str(args.lr)[2:]}'
+args.snap_dir = os.path.join(args.save, args.name)
+args.snap_dir += f'_seed{args.seed}' + lr_schedule + '_' + f"_bs{args.batch_size}"
+args.dirs = f'{args.snap_dir}/{args.model_signature}/'
+utils.makedirs(args.dirs)
+
+logger = utils.get_logger(logpath=os.path.join(args.dirs, 'logs'), filepath=os.path.abspath(__file__))
+logger.info(args)
+
+mean = torch.zeros(2).to(args.device) # mean=0
+cov = torch.eye(2).to(args.device) # covariance=1
+priorMVG_Z = torch.distributions.multivariate_normal.MultivariateNormal(loc=mean, covariance_matrix=cov) # MVG ~ N(0,I)
 
 
 def count_parameters(model):
@@ -98,17 +123,17 @@ def compute_loss(args, model, batch_size=None, beta=1.):
     if batch_size is None: batch_size = args.batch_size
 
     # load data
-    x = toy_data.inf_train_gen(args.data, batch_size=batch_size)
+    x = toy_data.inf_train_gen(args, args.data, batch_size=batch_size)
     x = torch.from_numpy(x).type(torch.float32).to(device)
     zero = torch.zeros(x.shape[0], 1).to(x)
 
     # transform to z
-    z, delta_logp = model(x, zero)
+    z, delta_logp = model(x, zero) # delta_logp = logpx - logdetgrad
 
     # compute log p(z)
     logpz = standard_normal_logprob(z).sum(1, keepdim=True)
 
-    logpx = logpz - beta * delta_logp
+    logpx = logpz - beta * delta_logp  
     loss = -torch.mean(logpx)
     return loss, torch.mean(logpz), torch.mean(-delta_logp)
 
@@ -214,14 +239,16 @@ if __name__ == '__main__':
             if args.actnorm: blocks.append(layers.ActNorm1d(2))
             if args.batchnorm: blocks.append(layers.MovingBatchNorm1d(2))
         model = layers.SequentialFlow(blocks).to(device)
-    elif args.arch == 'realnvp':
-        blocks = []
-        for _ in range(args.nblocks):
-            blocks.append(layers.CouplingBlock(2, swap=False))
-            blocks.append(layers.CouplingBlock(2, swap=True))
-            if args.actnorm: blocks.append(layers.ActNorm1d(2))
-            if args.batchnorm: blocks.append(layers.MovingBatchNorm1d(2))
-        model = layers.SequentialFlow(blocks).to(device)
+    else:
+        print("Not Implemented yet.")
+    # elif args.arch == 'realnvp':
+    #     blocks = []
+    #     for _ in range(args.nblocks):
+    #         blocks.append(layers.CouplingBlock(2, swap=False))
+    #         blocks.append(layers.CouplingBlock(2, swap=True))
+    #         if args.actnorm: blocks.append(layers.ActNorm1d(2))
+    #         if args.batchnorm: blocks.append(layers.MovingBatchNorm1d(2))
+    #     model = layers.SequentialFlow(blocks).to(device)
 
     logger.info(model)
     logger.info("Number of trainable parameters: {}".format(count_parameters(model)))
@@ -233,18 +260,119 @@ if __name__ == '__main__':
     logpz_meter = utils.RunningAverageMeter(0.93)
     delta_logp_meter = utils.RunningAverageMeter(0.93)
 
+    new_loss_meter = utils.RunningAverageMeter(0.93)
+    regularizer_meter = utils.RunningAverageMeter(0.93)
+
+
     end = time.time()
     best_loss = float('inf')
     model.train()
+
+    # Set kernel density estimator  tat_data: [batchsize, 2]
+    tgt_data = toy_data.inf_train_gen(args, args.data, batch_size=args.batch_size) # kde로 측정할 우리가 정답아는 분포
+    tgt_data = torch.from_numpy(tgt_data).type(torch.float32).to(args.device) # kde로 측정할 우리가 정답아는 분포
+    kernel_estimator = KernelDensityEstimator(tgt_data, bandwidth=args.kde_bandwidth).to(args.device)
+    
+    # Set KLD loss
+    kl_loss_mean = torch.nn.KLDivLoss(reduction='batchmean').to(args.device)
+    kl_loss_mean_log = torch.nn.KLDivLoss(reduction='batchmean', log_target=True).to(args.device)
+    kl_loss = torch.nn.KLDivLoss(reduction="none").to(args.device)
+
     for itr in range(1, args.niters + 1):
         optimizer.zero_grad()
-
         beta = min(1, itr / args.annealing_iters) if args.annealing_iters > 0 else 1.
-        loss, logpz, delta_logp = compute_loss(args, model, beta=beta)
-        loss_meter.update(loss.item())
-        logpz_meter.update(logpz.item())
-        delta_logp_meter.update(delta_logp.item())
-        loss.backward()
+
+        ''' 1. Sampling z from MVG and keep log_p_z '''
+        z = priorMVG_Z.sample((args.batch_size,)).to(args.device) # [batchsize, 2]
+        log_p_z = priorMVG_Z.log_prob(z) # [batchsize]
+        zero = torch.zeros(z.shape[0], 1).to(z)
+
+        ''' 2. Calculate f(x; theta) '''
+        sampled_x, delta_log_p_x = model.inverse(z, zero)
+        log_p_x = log_p_z + delta_log_p_x # f(x) = log p(z) - log |det J| = log p(x)
+
+        ''' 3. Calculate g(x; KDE) '''
+        kde_q = kernel_estimator(sampled_x) # Estimate denstiy of sampled data in KDE
+    # # load data
+    # x = toy_data.inf_train_gen(args, args.data, batch_size=batch_size)
+    # x = torch.from_numpy(x).type(torch.float32).to(device)
+    # zero = torch.zeros(x.shape[0], 1).to(x)
+
+    # # transform to z
+    # z, delta_logp = model(x, zero) # delta_logp = logpx - logdetgrad
+
+    # # compute log p(z)
+    # logpz = standard_normal_logprob(z).sum(1, keepdim=True)
+
+    # logpx = logpz - beta * delta_logp  
+    # loss = -torch.mean(logpx)
+    # return loss, torch.mean(logpz), torch.mean(-delta_logp)
+        losses = {}
+        ''' 4. Calculate Objective 1 = -log p(x): losses['nll'] '''
+        losses['nll'], losses['logpz'], losses['delta_logp'] = compute_loss(args, model, beta=beta)
+
+        ''' 5. Calculate Objective 2 = KL_divergence '''
+        # KL(P||Q) = kl_loss(Q.log, P)
+        # KL(Q||P) = kl_loss(P.log, Q)
+        # f(x) = log_p_x -> log density
+        # g(x) = kde_q -> density
+        
+        losses['kl_mean_gf'] = kl_loss_mean(log_p_x, kde_q)
+        losses['kl_mean_g_minusf'] = kl_loss_mean(-1 * log_p_x, kde_q)       
+        
+        losses['kl_gf_norm'] = torch.norm(kl_loss(log_p_x, kde_q))
+        losses['kl_g_minusf_norm'] = torch.norm(kl_loss(-1 * log_p_x, kde_q))
+
+        losses['qp_ratio'] = torch.norm((kde_q - log_p_x.exp())-1)
+        losses['pq_ratio'] = torch.norm((log_p_x.exp() - kde_q)-1)
+
+        M = 0.5 * (log_p_x.exp() + kde_q) # Calculate as the form of density
+        KL_PM = kl_loss_mean_log(M.log(), log_p_x)
+        KL_QM = kl_loss_mean_log(M.log(), kde_q.log())
+        losses['jsd'] = 0.5 * (KL_PM + KL_QM)
+
+
+        ''' 6. Calculate norm between f and g '''
+        density_x = torch.exp(log_p_x)
+        norm_density = torch.norm(density_x - kde_q) # l2 norm
+
+        if args.toy_exp_type == 'default':
+            losses['new_objective'] = losses['nll']
+            regulaizer = 0
+        elif args.toy_exp_type == 'KL_gf':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_mean_gf']
+            regulaizer = args.norm_hyp * losses['kl_mean_gf']
+        elif args.toy_exp_type == 'KL_g-f':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_mean_g_minusf']
+            regulaizer = args.norm_hyp * losses['kl_mean_g_minusf']
+        elif args.toy_exp_type == 'KLeleNorm_gf':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_gf_norm']
+            regulaizer = args.norm_hyp * losses['kl_gf_norm']
+        elif args.toy_exp_type == 'KLeleNorm_g-f':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['kl_g_minusf_norm']
+            regulaizer = args.norm_hyp * losses['kl_g_minusf_norm']
+        elif args.toy_exp_type == 'qp_ratio':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['qp_ratio']
+            regulaizer = args.norm_hyp * losses['qp_ratio']
+        elif args.toy_exp_type == 'pq_ratio':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['pq_ratio']
+            regulaizer = args.norm_hyp * losses['pq_ratio']
+        elif args.toy_exp_type == 'jsd':   
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['jsd']
+            regulaizer = args.norm_hyp * losses['jsd']
+        else:
+            print("Not Implemented")
+    
+
+        loss_meter.update(losses['nll'].item())
+        logpz_meter.update(losses['logpz'].item())
+        delta_logp_meter.update(losses['delta_logp'].item())
+        new_loss_meter.update(losses['new_objective'].item())
+        regularizer_meter.update(regulaizer)
+        # loss.backward()
+        
+        losses['new_objective'].backward()
+
         if args.learn_p and itr > args.annealing_iters: compute_p_grads(model)
         optimizer.step()
         update_lipschitz(model, args.n_lipschitz_iters)
@@ -286,7 +414,7 @@ if __name__ == '__main__':
         if itr == 1 or itr % args.viz_freq == 0:
             with torch.no_grad():
                 model.eval()
-                p_samples = toy_data.inf_train_gen(args.data, batch_size=20000)
+                p_samples = toy_data.inf_train_gen(args, args.data, batch_size=20000)
 
                 sample_fn, density_fn = model.inverse, model.forward
 
@@ -295,7 +423,7 @@ if __name__ == '__main__':
                     p_samples, torch.randn, standard_normal_logprob, transform=sample_fn, inverse_transform=density_fn,
                     samples=True, npts=400, device=device
                 )
-                fig_filename = os.path.join(args.save, 'figs', '{:04d}.jpg'.format(itr))
+                fig_filename = os.path.join(args.dirs, 'figs', '{:04d}.jpg'.format(itr))
                 utils.makedirs(os.path.dirname(fig_filename))
                 plt.savefig(fig_filename)
                 plt.close()
