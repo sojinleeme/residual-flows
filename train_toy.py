@@ -410,11 +410,11 @@ if __name__ == '__main__':
 
                 if test_loss.item() < best_loss:
                     best_loss = test_loss.item()
-                    utils.makedirs(args.save)
+                    utils.makedirs(args.dirs)
                     torch.save({
                         'args': args,
                         'state_dict': model.state_dict(),
-                    }, os.path.join(args.save, 'checkpt.pth'))
+                    }, os.path.join(args.dirs, 'checkpt.pth'))
                 model.train()
 
         if itr == 1 or itr % args.viz_freq == 0:
