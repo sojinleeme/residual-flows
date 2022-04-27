@@ -57,6 +57,13 @@ DATASET = "8gaussians"
 #             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
 
 # if args.n == 1:
-#     for toy_exp_type in ['pq_ratio']:
-#         for norm_hyp in [1,10,100]:
+#     for toy_exp_type in ['qp_ratio']:
+#         for norm_hyp in [100]:
 #             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
+
+'''ToDo'''
+# if args.n == 0:
+#     for toy_exp_type in ['qp_ratio']:
+#         for norm_hyp in [10]:
+#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
+
