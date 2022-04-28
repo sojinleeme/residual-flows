@@ -29,41 +29,15 @@ DATASET = "8gaussians"
 #             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
 
 
-'''64 Server'''
-# if args.n == 0:
-#     for toy_exp_type in ['KL_gf']:
-#         for norm_hyp in [1,10,100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
-# if args.n == 1:
-#     for toy_exp_type in ['KL_g-f']:
-#         for norm_hyp in [1,10,100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
-# if args.n == 2:
-#     for toy_exp_type in ['KLeleNorm_gf']:
-#         for norm_hyp in [1,10,100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
-# if args.n == 3:
-#     for toy_exp_type in ['KLeleNorm_g-f']:
-#         for norm_hyp in [1,10,100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
 '''AI Hub'''
 # if args.n == 0:
-#     for toy_exp_type in ['qp_ratio']:
-#         for norm_hyp in [1,10,100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
+#     for toy_exp_type in ['qp_ratio_new']:
+#         for norm_hyp in [10]:
+#             for kde_bandwidth in [0.1]:
+#                 subprocess.call(f"python train_toy.py --kde_bandwidth {kde_bandwidth} --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
 
 # if args.n == 1:
-#     for toy_exp_type in ['qp_ratio']:
+#     for toy_exp_type in ['qp_ratio_new']:
 #         for norm_hyp in [100]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
-'''ToDo'''
-# if args.n == 0:
-#     for toy_exp_type in ['qp_ratio']:
-#         for norm_hyp in [10]:
-#             subprocess.call(f"python train_toy.py --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)
-
+#             for kde_bandwidth in [0.1]:
+#                 subprocess.call(f"python train_toy.py --kde_bandwidth {kde_bandwidth} --use_wandb 'True' --norm_hyp {norm_hyp} --toy_exp_type {toy_exp_type} --data {DATASET} --gpu {n}", shell=True)

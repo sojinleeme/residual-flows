@@ -76,7 +76,7 @@ parser.add_argument('--use_wandb', type=str, default='False')
 parser.add_argument('--norm_hyp', type=float, default=0.0001)
 parser.add_argument('--toy_exp_type', type=str, default='default') # base
 parser.add_argument('--sampling_num', type=int, default=256) # base
-parser.add_argument('--kde_bandwidth', type=float, default=0.6) # base
+parser.add_argument('--kde_bandwidth', type=float, default=0.1) # base
 
 args = parser.parse_args()
 
@@ -95,7 +95,7 @@ args.name = args.arch + '_' + '_' + args.data + '/' + args.toy_exp_type + '_' + 
 
 lr_schedule = f'_lr{str(args.lr)[2:]}'
 args.snap_dir = os.path.join(args.save, args.name)
-args.snap_dir += f'_seed{args.seed}' + lr_schedule + '_' + f"_bs{args.batch_size}"
+args.snap_dir += f'_seed{args.seed}_KDE{args.kde_bandwidth}'  + lr_schedule + '_' + f"_bs{args.batch_size}"
 args.dirs = f'{args.snap_dir}/{args.model_signature}/'
 utils.makedirs(args.dirs)
 
@@ -322,7 +322,7 @@ if __name__ == '__main__':
         losses['kl_g_minusf_norm'] = torch.norm(kl_loss(-1 * log_p_x, kde_q))
 
         losses['qp_ratio'] = torch.norm((kde_q - log_p_x.exp())-1)
-        losses['pq_ratio'] = torch.norm((log_p_x.exp() - kde_q)-1)
+        losses['qp_ratio_new'] = torch.norm(kde_q - log_p_x.exp())
 
         M = 0.5 * (log_p_x.exp() + kde_q) # Calculate as the form of density
         KL_PM = kl_loss_mean_log(M.log(), log_p_x)
@@ -352,9 +352,9 @@ if __name__ == '__main__':
         elif args.toy_exp_type == 'qp_ratio':
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['qp_ratio']
             regularizer = args.norm_hyp * losses['qp_ratio'].item()
-        elif args.toy_exp_type == 'pq_ratio':
-            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['pq_ratio']
-            regularizer = args.norm_hyp * losses['pq_ratio'].item()
+        elif args.toy_exp_type == 'qp_ratio_new':
+            losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['qp_ratio_new']
+            regularizer = args.norm_hyp * losses['qp_ratio_new'].item()
         elif args.toy_exp_type == 'jsd':   
             losses['new_objective'] = losses['nll'] + args.norm_hyp * losses['jsd']
             regularizer = args.norm_hyp * losses['jsd'].item()
